@@ -42,7 +42,7 @@ _ATTRS = dicts.add(copy_to_directory_lib_attrs, {
     "package": attr.string(
         doc = """The package name. If set, should match the `name` field in the `package.json` file for this package.
 
-If set, the package name set here will be used for linking if a npm_link_package does not specify a package name. A 
+If set, the package name set here will be used for linking if a npm_link_package does not specify a package name. A
 npm_link_package that specifies a package name will override the value here when linking.
 
 If unset, a npm_link_package that references this npm_package must define the package name must be for linking.
@@ -51,7 +51,7 @@ If unset, a npm_link_package that references this npm_package must define the pa
     "version": attr.string(
         doc = """The package version. If set, should match the `version` field in the `package.json` file for this package.
 
-If set, a npm_link_package may omit the package version and the package version set here will be used for linking. A 
+If set, a npm_link_package may omit the package version and the package version set here will be used for linking. A
 npm_link_package that specifies a package version will override the value here when linking.
 
 If unset, a npm_link_package that references this npm_package must define the package version must be for linking.
@@ -130,8 +130,46 @@ If unset, a npm_link_package that references this npm_package must define the pa
         linking with `npm_link_package`.
         """,
     ),
+    "_npm_script_generator": attr.label(
+        default = Label("//npm/private:npm_script_generator"),
+        cfg = "exec",
+        executable = True,
+    ),
     "_windows_constraint": attr.label(default = "@platforms//os:windows"),
 })
+
+_OUTS = {
+    "pack_bat": "%{name}.pack.bat",
+    "pack_sh": "%{name}.pack.sh",
+    "publish_bat": "%{name}.publish.bat",
+    "publish_sh": "%{name}.publish.sh",
+}
+
+def _create_npm_scripts(ctx, package_dir):
+    args = ctx.actions.args()
+    toolchain = ctx.toolchains["@rules_nodejs//nodejs:toolchain_type"].nodeinfo
+
+    args.add_all([
+        package_dir.path,
+        ctx.outputs.pack_sh.path,
+        ctx.outputs.publish_sh.path,
+        toolchain.run_npm.path,
+        ctx.outputs.pack_bat.path,
+        ctx.outputs.publish_bat.path,
+    ])
+
+    ctx.actions.run(
+        progress_message = "Generating npm pack & publish scripts",
+        mnemonic = "GenerateNpmScripts",
+        executable = ctx.executable._npm_script_generator,
+        inputs = [toolchain.run_npm, package_dir],
+        outputs = [ctx.outputs.pack_sh, ctx.outputs.publish_sh, ctx.outputs.pack_bat, ctx.outputs.publish_bat],
+        arguments = [args],
+        # Must be run local (no sandbox) so that the pwd is the actual execroot
+        # in the script which is used to generate the path in the pack & publish
+        # scripts.
+        execution_requirements = {"local": "1"},
+    )
 
 def _impl(ctx):
     is_windows = ctx.target_platform_has_constraint(ctx.attr._windows_constraint[platform_common.ConstraintValueInfo])
@@ -183,6 +221,8 @@ def _impl(ctx):
     # TODO: add a verification action that checks that the package and version match the contained package.json;
     #       if no package.json is found in the directory then optional generate one
 
+    _create_npm_scripts(ctx, dst)
+
     return [
         DefaultInfo(
             files = depset([dst]),
@@ -197,8 +237,13 @@ def _impl(ctx):
 
 npm_package_lib = struct(
     attrs = _ATTRS,
+    outputs = _OUTS,
     implementation = _impl,
     provides = [DefaultInfo, NpmPackageInfo],
+    toolchains = [
+        "@bazel_tools//tools/sh:toolchain_type",
+        "@rules_nodejs//nodejs:toolchain_type",
+    ],
 )
 
 npm_package = rule(
@@ -206,6 +251,8 @@ npm_package = rule(
     implementation = npm_package_lib.implementation,
     attrs = npm_package_lib.attrs,
     provides = npm_package_lib.provides,
+    outputs = npm_package_lib.outputs,
+    toolchains = npm_package_lib.toolchains,
 )
 
 def stamped_package_json(name, stamp_var, **kwargs):
@@ -244,4 +291,32 @@ def stamped_package_json(name, stamp_var, **kwargs):
             ".version = ($stamp.{} // \"0.0.0\")".format(stamp_var),
         ]),
         **kwargs
+    )
+
+def npm_package_macro(name, **kwargs):
+    """Wrapper macro around npm_package
+
+    Args:
+        name: Unique name for this target
+        **kwargs: All other args forwarded to npm_package
+    """
+    npm_package(
+        name = name,
+        **kwargs
+    )
+
+    native.alias(
+        name = name + ".pack",
+        actual = select({
+            "@bazel_tools//src/conditions:host_windows": name + ".pack.bat",
+            "//conditions:default": name + ".pack.sh",
+        }),
+    )
+
+    native.alias(
+        name = name + ".publish",
+        actual = select({
+            "@bazel_tools//src/conditions:host_windows": name + ".publish.bat",
+            "//conditions:default": name + ".publish.sh",
+        }),
     )

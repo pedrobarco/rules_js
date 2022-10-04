@@ -3,7 +3,7 @@
 
 load(
     "//npm/private:npm_package.bzl",
-    _npm_package = "npm_package",
+    _npm_package = "npm_package_macro",
     _stamped_package_json = "stamped_package_json",
 )
 load(

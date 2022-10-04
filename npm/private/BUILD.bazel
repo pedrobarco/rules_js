@@ -1,6 +1,7 @@
 "Internal implementation details"
 
 load("@bazel_skylib//:bzl_library.bzl", "bzl_library")
+load("//js:defs.bzl", "js_binary")
 
 exports_files(
     glob(["*.bzl"]),
@@ -161,4 +162,13 @@ bzl_library(
     name = "yaml",
     srcs = ["yaml.bzl"],
     visibility = ["//npm:__subpackages__"],
+)
+
+js_binary(
+    name = "npm_script_generator",
+    entry_point = ":npm_script_generator.js",
+    env = {
+        "BAZEL_BINDIR": "$(BINDIR)",
+    },
+    visibility = ["//visibility:public"],
 )
